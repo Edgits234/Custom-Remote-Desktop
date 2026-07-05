@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Phone Client Test</title>
+
+    <!--global toolkit.js-->
+    <script>
+        //#region toolkit.js
+
+        /**
+         * this function prints all the input arguments with no space in between and with a new line at the end
+         * @param  {...any} input inputs of the print aguments are printed one by one with no space in between
+         */
+        function println(...input) {
+
+            //create a string variable to store the input as one big string to be printed
+            let output = "";
+
+            //iterate through all of the arguments
+            for(let i = 0; i < input.length; i++) {
+                //get the current index
+                let curr = input[i];
+
+                if(typeof(curr) == "object") {
+                    //Lets use a custom function that I don't fucking understand and that I wish I did
+                    output += JSON.stringify(curr, null, 2);
+                }else {
+                    //add the current index to the output (convert to a string in the process)
+                    output += curr;
+                }
+            }
+            
+            //print current line
+            console.log(output);
+            
+            //clear the output
+            output = "";
+        }
+
+
+        /**
+         * 
+         * @param {number} ms the desired amount of milliseconds you want to stop the async function for (gives execution to other parts of the code)
+         * @returns return a promise that gives back async function execution after the desired amount of milliseconds `ms`
+         */
+        function delay(ms) {
+            //return a promise that gives back async function execution after the desired amount of milliseconds "ms"
+            return new Promise(
+                //set a lambda that calls resolve after the desired amount of milliseconds "ms"
+                function(resolve) {
+                    //timeout to call resolvea fter a desired amount of milliseconds "ms"
+                    setTimeout(resolve, ms);
+                }
+            );
+        }
+
+        /**
+         * @returns returns the current line number on the current line
+         */
+        function getLineNumber() {
+            const stack = (new Error()).stack;
+            // Look at the text, find the second file reference, and pull the line number
+            const match = stack.split('\n')[2].match(/:(\d+):\d+\)?$/);
+            return match ? Number(match[1]) : null;
+        }
+
+        /**
+         * get the length of a str if each character was a byte
+         * @param {string} str - the string you want to read the byte length
+         */
+        function strlen(str) {
+            let len = 0; //variable to store final returned length of the string
+            
+            //iterate through each 2 byte characters
+            for(let i = 0; i < str.length; i++) {
+                //get current character (as a number)
+                let c = str.charCodeAt(i);
+
+                //separate 2 byte characters into byte chunks
+                let chunk1 = (c >> 8) & 0b11111111;
+
+                //count length, if chunk1 is 0 then it means character can fit inside a byte
+                if(chunk1 != 0) {
+                    len++;//needs more than one byte to store character
+                }
+
+                len++;//minimum 1 byte for each 2 byte characters
+            }
+
+            return len;
+        }
+        
+        
+        //#endregion
+
+    </script>
+
+    <!--specific website toolkit.js-->
+    <script>
+        /**
+         * send a command through a socket connection
+         * @param {WebSocket} socket - a standart secure connection
+         * @param {number}    cmd    - the id of the command you want to send (refer to the CMD object constants)
+         * @param {string}    str    - the string (data) you want to send
+         */
+        function send_cmd(socket, cmd, str) {
+            let line = getLineNumber();
+
+            //make sure command (alias cmd) fits in one byte
+            if(cmd < 0 || 255 < cmd) {
+                println("ERROR line ",line,", command id : (",cmd,") is not inside the 0-255 range (doesn't fit inside a single byte)");
+                return;
+            }
+
+            let len  = strlen(str)            ; // get len of str if each character was 8 bits (to store in uint8Array)
+            let buff = new Uint8Array(len + 1); // +1 for the cmd at the start
+
+            //set first byte to command id
+            buff[0] = cmd;
+
+            //create mask used to separate each 16 bit characters
+            const mask = (1 << 8) - 1;//equ to 0b11111111
+            
+            //set rest of the bits to rest of string
+            for(let i = 0; i < len; i++) {
+                //get the current character (uint16_t)
+                let c = str.charCodeAt(i);
+
+                //separate 16 bit character into two chunks
+                let chunk1 = (c >> 8) & mask;
+                let chunk2 = (c)      & mask;
+            
+                //add chunks to buffer (chunk1 is sometimes unused and therefor ignored)
+                if(chunk1 != 0) {
+                    buff[i] = chunk1;
+                }
+
+                //chunk2 must never be ignored
+                buff[i + 1] = chunk2;
+            }
+
+            //send the buffer
+            socket.send(buff);
+        }
+    </script>
+</head>
+<body>
+    
+    
+    
+    <div>
+        <h2>Log In</h2>
+        
+        <input  id="log_in_username" type="text"     placeholder="username" style="padding: 10px; border-radius: 4px; border: 1px solid #ccc;">
+        <input  id="log_in_password" type="password" placeholder="password" style="padding: 10px; border-radius: 4px; border: 1px solid #ccc;">
+        <button id="log_in_button"  >Log in</button>
+    </div>
+    
+    <div>
+        <h2>Sign Up</h2>
+        
+        <input  id="sign_up_username" type="text"     placeholder="username" style="padding: 10px; border-radius: 4px; border: 1px solid #ccc;">
+        <input  id="sign_up_password" type="password" placeholder="password" style="padding: 10px; border-radius: 4px; border: 1px solid #ccc;">
+        <button id="sign_up_button">Sign up</button>
+    </div>
+    
+    
+    
+    <p id="status">Status: Disconnected</p>
+
+    <script>
+        const CMD = {
+            LOGIN : 0,
+            SIGNIN: 1,
+        }
+
+        const log_in_username  = document.getElementById("log_in_username" );
+        const log_in_password  = document.getElementById("log_in_password" );
+        const log_in_button    = document.getElementById("log_in_button"   );
+
+        const sign_up_username = document.getElementById("sign_up_username");
+        const sign_up_password = document.getElementById("sign_up_password");
+        const sign_up_button   = document.getElementById("sign_up_button"  );
+
+        log_in_button.onclick = function() {
+            username = log_in_username.value;
+            password = log_in_password.value;
+            println("logging in...");
+            println("contacting server to confirm credentials : ");
+            println("username: ",username);
+            println("password: ",password);
+            println("...");
+
+            const socket = new WebSocket("https://localhost:8080");
+
+            socket.onopen = function(event) {
+                println("internet communication opened : \"",event,"\"");
+
+                send_cmd(socket, CMD.LOGIN, 
+                    "username:" + username + "\n" + 
+                    "password:" + password 
+                );
+
+            }
+
+            socket.onmessage = function(message) {
+                println("internet communication recieved : \"",message,"\"");
+            }
+
+            socket.onerror = function(event) {
+                println("internet communication error : \"",event,"\"");
+            }
+        }
+
+        // connectBtn.onclick = function() {
+        //     statusText.innerText = "Status: Connecting...";
+            
+        //     // Connect to the localtunnel secure web socket address (wss://)
+        //     // Notice we DO NOT type a port number here, localtunnel handles it on Port 443
+        //     const socket = new WebSocket('wss://silver-kings-shave.loca.lt');
+
+        //     socket.onopen = function() {
+        //         statusText.innerText = "Status: Connected Perfectly!";
+        //         // Send a message the instant the pipe opens
+        //         socket.send("Middle finger to TeamViewer! It works!");
+        //     };
+
+        //     socket.onmessage = function(event) {
+        //         alert("PC Replied: " + event.data);
+        //     };
+
+        //     socket.onerror = function(error) {
+        //         statusText.innerText = "Status: Connection Failed.";
+        //     };
+        // };
+    </script>
+</body>
+</html>
